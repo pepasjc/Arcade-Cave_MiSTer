@@ -164,7 +164,12 @@ module Main(
   output [63:0] io_debug_writes,
   output [63:0] io_debug_data,
   output [63:0] io_debug_live,
-  output [63:0] io_debug_palette
+  output [63:0] io_debug_palette,
+  // RetroAchievements RAM mirror: second, read-only port of the 64 kB 68K
+  // work RAM, 64 bits wide (qword n = 68K words 4n..4n+3, lowest word in
+  // bits 15:0), clocked by io_systemClock. Registered address, 1-cycle read.
+  input  [12:0]  io_ra_rd_addr,
+  output [63:0]  io_ra_rd_q
 );
 
   wire        gameIsDFeveron;
@@ -4596,19 +4601,29 @@ module Main(
     ? highScoreRamAddr : mainRamSaveStateAddr;
   assign mainRamPhysicalDin = highScoreRamOwned
     ? highScoreRamDin : mainRamSaveStateDin;
-  CaveSinglePortRam #(
-    .ADDR_WIDTH  (15),
-    .DATA_WIDTH  (16),
-    .DEPTH       (0),
-    .MASK_ENABLE (1)
+  // RA mirror: was CaveSinglePortRam. Port A is the unchanged CPU /
+  // save-state / high-score port; port B is a read-only 64-bit port in the
+  // system clock domain for the RetroAchievements DDR mirror.
+  CaveTrueDualPortRam #(
+    .ADDR_WIDTH_A (15),
+    .ADDR_WIDTH_B (13),
+    .DATA_WIDTH_A (16),
+    .DATA_WIDTH_B (64),
+    .DEPTH_A      (0),
+    .DEPTH_B      (0),
+    .MASK_ENABLE  (1)
   ) mainRam (
-    .clock (clock),
-    .rd    (mainRamPhysicalRd),
-    .wr    (mainRamPhysicalWr),
-    .addr  (_mainRam_io_addr),
-    .mask  (mainRamPhysicalMask),
-    .din   (mainRamPhysicalDin),
-    .dout  (_mainRam_io_dout)
+    .clock_a (clock),
+    .rd_a    (mainRamPhysicalRd),
+    .wr_a    (mainRamPhysicalWr),
+    .addr_a  (_mainRam_io_addr),
+    .mask_a  (mainRamPhysicalMask),
+    .din_a   (mainRamPhysicalDin),
+    .dout_a  (_mainRam_io_dout),
+    .clock_b (io_systemClock),
+    .rd_b    (1'b1),
+    .addr_b  (io_ra_rd_addr),
+    .dout_b  (io_ra_rd_q)
   );
   assign _pwrinst2SpriteExtraRam_addr = _cpu_io_addr[14:0];
   CaveSaveStateSinglePortRam #(

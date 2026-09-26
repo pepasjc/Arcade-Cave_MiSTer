@@ -117,7 +117,11 @@ module Cave(
   input         ddr_wait_n,
   input         ddr_valid,
   output [7:0]  ddr_burstLength,
-  input         ddr_burstDone
+  input         ddr_burstDone,
+  // RetroAchievements RAM mirror: read-only 64-bit port of the 68K work RAM
+  // (system clock domain, 1-cycle read latency)
+  input  [12:0] ra_rd_addr,
+  output [63:0] ra_rd_q
 );
 
   wire         systemFrameBufferForceBlank;
@@ -1418,7 +1422,9 @@ module Cave(
     .io_ss_reconstruction_ready             (_main_io_ss_reconstruction_ready),
     .io_ss_blocked_access                   (_main_io_ss_blocked_access),
     .io_service_debug                       (service_debug),
-    .io_ssbus                               (ssCpuOwners[0])
+    .io_ssbus                               (ssCpuOwners[0]),
+    .io_ra_rd_addr                          (ra_rd_addr),
+    .io_ra_rd_q                             (ra_rd_q)
 `ifdef CAVE_ENABLE_DEBUG_OVERLAY
     ,
     .io_debug_pipeline                      (_main_io_debug_pipeline),

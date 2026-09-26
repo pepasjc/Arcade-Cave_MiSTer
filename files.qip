@@ -12,6 +12,7 @@ set_global_assignment -name QIP_FILE sys/pll_audio.qip
 set_global_assignment -name QIP_FILE sys/pll_cfg.qip
 set_global_assignment -name QIP_FILE sys/pll_hdmi.qip
 set_global_assignment -name VERILOG_FILE rtl/reset_ctrl.v
+set_global_assignment -name VERILOG_FILE rtl/ra/cave_ra_mirror.v
 set_global_assignment -name SYSTEMVERILOG_FILE Arcade-Cave.sv
 set_global_assignment -name SDC_FILE Arcade-Cave.sdc
 

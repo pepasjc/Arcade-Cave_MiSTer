@@ -55,7 +55,7 @@ assign VIDEO_ARY = (!aspect_ratio) ? (orientation ? 12'd4 : 12'd3) : 12'd0;
 
 `include "build_id.v"
 localparam CONF_STR = {
-  "Cave;SS3E000000:400000;",
+  "RA_CAVE;SS3E000000:400000;",
   "P1,Video Options;",
   "D0P1O12,Aspect Ratio,Original,Fullscreen,[ARC1],[ARC2];",
   "D0P1O4,Flip Screen,Off,On;",
@@ -657,11 +657,15 @@ wire player_2_pause    =             joystick_1[10];
 ////////////////////////////////////////////////////////////////////////////////
 
 wire [31:0] ddr_addr;
+wire        cave_ddr_rd, cave_ddr_we, cave_ddr_busy;
+wire  [7:0] cave_ddr_be, cave_ddr_burstcnt;
+wire [63:0] cave_ddr_din;
+wire [12:0] ra_rd_addr;
+wire [63:0] ra_rd_q;
 wire        sdram_oe_n;
 wire [15:0] sdram_din;
 wire [15:0] sdram_dout;
 
-assign DDRAM_ADDR = ddr_addr[31:3];
 assign SDRAM_DQ = sdram_oe_n ? sdram_din : 16'bZ;
 assign sdram_dout = SDRAM_DQ;
 assign SDRAM_DQMH = 0;
@@ -747,16 +751,19 @@ Cave cave (
   .frameBufferCtrl_lowLat(FB_LL),
   .frameBufferCtrl_forceBlank(FB_FORCE_BLANK),
   // DDR
-  .ddr_rd(DDRAM_RD),
-  .ddr_wr(DDRAM_WE),
+  .ddr_rd(cave_ddr_rd),
+  .ddr_wr(cave_ddr_we),
   .ddr_addr(ddr_addr),
-  .ddr_mask(DDRAM_BE),
-  .ddr_din(DDRAM_DIN),
+  .ddr_mask(cave_ddr_be),
+  .ddr_din(cave_ddr_din),
   .ddr_dout(DDRAM_DOUT),
-  .ddr_wait_n(~DDRAM_BUSY),
+  .ddr_wait_n(~cave_ddr_busy),
   .ddr_valid(DDRAM_DOUT_READY),
-  .ddr_burstLength(DDRAM_BURSTCNT),
+  .ddr_burstLength(cave_ddr_burstcnt),
   .ddr_burstDone(1'b0),
+  // RetroAchievements RAM mirror tap
+  .ra_rd_addr(ra_rd_addr),
+  .ra_rd_q(ra_rd_q),
   // SDRAM
   .sdram_cke(SDRAM_CKE),
   .sdram_cs_n(SDRAM_nCS),
@@ -787,6 +794,67 @@ Cave cave (
   .led_power(LED_POWER[0]),
   .led_disk(LED_DISK[0]),
   .led_user(LED_USER)
+);
+
+////////////////////////////////////////////////////////////////////////////////
+// RETROACHIEVEMENTS RAM MIRROR
+////////////////////////////////////////////////////////////////////////////////
+//
+// The 64 kB 68000 work RAM (FBNeo "RAM"/"68K RAM" area, offset 0 = CPU
+// 0x100000, or 0x400000 on Power Instinct 2 / Gogetsuji Legends) is read
+// through a second 64-bit port of Main's mainRam and copied to DDR 0x3D000000
+// at the start of every VBlank, in FBNeo byte order (mirror byte k = 68K byte
+// k^1). See rtl/ra/cave_ra_mirror.v. The DDR port is shared with the core through
+// cave_ra_ddr_arb, which only switches owners at transaction boundaries.
+
+reg  [1:0] ra_vblank_sync = 2'b0;
+always @(posedge clk_sys) ra_vblank_sync <= {ra_vblank_sync[0], vblank};
+
+wire        ra_active, ra_ddr_we, ra_ddr_busy;
+wire  [7:0] ra_ddr_burstcnt, ra_ddr_be;
+wire [28:0] ra_ddr_addr;
+wire [63:0] ra_ddr_din;
+
+cave_ra_mirror ra_mirror (
+  .rst          (rst_sys),
+  .clk          (clk_sys),
+  .lvbl         (~ra_vblank_sync[1]),
+  .hold         (ioctl_download | ss_active),
+  .rd_addr      (ra_rd_addr),
+  .rd_data      (ra_rd_q),
+  .active       (ra_active),
+  .ddr_busy     (ra_ddr_busy),
+  .ddr_burstcnt (ra_ddr_burstcnt),
+  .ddr_addr     (ra_ddr_addr),
+  .ddr_we       (ra_ddr_we),
+  .ddr_be       (ra_ddr_be),
+  .ddr_din      (ra_ddr_din)
+);
+
+cave_ra_ddr_arb ra_ddr_arb (
+  .clk            (clk_sys),
+  .rst            (rst_sys),
+  .ddr_busy       (DDRAM_BUSY),
+  .ddr_dout_ready (DDRAM_DOUT_READY),
+  .c0_rd          (cave_ddr_rd),
+  .c0_we          (cave_ddr_we),
+  .c0_addr        (ddr_addr[31:3]),
+  .c0_be          (cave_ddr_be),
+  .c0_din         (cave_ddr_din),
+  .c0_burstcnt    (cave_ddr_burstcnt),
+  .c0_busy        (cave_ddr_busy),
+  .c1_we          (ra_ddr_we),
+  .c1_addr        (ra_ddr_addr),
+  .c1_be          (ra_ddr_be),
+  .c1_din         (ra_ddr_din),
+  .c1_burstcnt    (ra_ddr_burstcnt),
+  .c1_busy        (ra_ddr_busy),
+  .ddr_rd         (DDRAM_RD),
+  .ddr_we         (DDRAM_WE),
+  .ddr_addr       (DDRAM_ADDR),
+  .ddr_be         (DDRAM_BE),
+  .ddr_din        (DDRAM_DIN),
+  .ddr_burstcnt   (DDRAM_BURSTCNT)
 );
 
 endmodule
