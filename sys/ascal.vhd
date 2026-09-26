@@ -2373,12 +2373,18 @@ BEGIN
 
 			-- Sometimes o_clk is paused during PLL reconfig and causes o_state to get stuck in sREAD state.
 			-- Reset state at VSync.
+			-- The VSync falling edge always coincides with an HSync rising edge
+			-- (both at o_hcpt=o_hsstart on line vsend), so do not drop that line's
+			-- HSync request: with a 2-line back porch and vmin=0 it is the line
+			-- that re-initialises o_vacc/o_vacpt (o_vcpt_pre2=o_vmin), and losing
+			-- it makes the source line counter run on across frames (the picture
+			-- scrolls through memory). Other small back porches lose a line step.
 			IF o_vsv(1)='1' AND o_vsv(0)='0' THEN
 				o_copy<=sWAIT;
 				o_state<=sDISP;
 				o_readlev<=0;
 				o_copylev<=0;
-				o_hsp<='0';
+				o_hsp<=o_hsv(0) AND NOT o_hsv(1);
 			END IF;
 
 			------------------------------------------------------
