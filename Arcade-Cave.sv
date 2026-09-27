@@ -50,8 +50,14 @@ assign LED_DISK[1] = 0;
 assign LED_POWER[1] = 0;
 assign BUTTONS = 0;
 
-assign VIDEO_ARX = (!aspect_ratio) ? (orientation ? 12'd3 : 12'd4) : (aspect_ratio - 1'd1);
-assign VIDEO_ARY = (!aspect_ratio) ? (orientation ? 12'd4 : 12'd3) : 12'd0;
+// Rotated games have square pixels (240x320 shown at 3:4), so when the frame
+// buffer is cropped to the output height, "Original" is simply the cropped
+// frame size (e.g. 240:285), which the scaler maps 1:1.
+reg fb_crop = 1'b0; // see ROTATED FRAME BUFFER CROP below
+wire [11:0] cave_fb_height;
+wire [31:0] cave_fb_base;
+assign VIDEO_ARX = (!aspect_ratio) ? (fb_crop ? {1'b0, FB_WIDTH}  : (orientation ? 13'd3 : 13'd4)) : (aspect_ratio - 1'd1);
+assign VIDEO_ARY = (!aspect_ratio) ? (fb_crop ? {1'b0, FB_HEIGHT} : (orientation ? 13'd4 : 13'd3)) : 13'd0;
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -61,6 +67,7 @@ localparam CONF_STR = {
   "D0P1O4,Flip Screen,Off,On;",
   "h1P1O3,Rotate Screen,On,Off;",
   "H1P1O3,Rotate Screen,Off,On;",
+  "P1O[74],Rotated Height,Crop to Output,Scale;",
   "P1O8,Refresh Rate,57Hz,60Hz;",
   "P1-;",
 `ifndef CAVE_ENABLE_DEBUG_OVERLAY
@@ -743,9 +750,9 @@ Cave cave (
   // Frame buffer control signals
   .frameBufferCtrl_enable(FB_EN),
   .frameBufferCtrl_hSize(FB_WIDTH),
-  .frameBufferCtrl_vSize(FB_HEIGHT),
+  .frameBufferCtrl_vSize(cave_fb_height),
   .frameBufferCtrl_format(FB_FORMAT),
-  .frameBufferCtrl_baseAddr(FB_BASE),
+  .frameBufferCtrl_baseAddr(cave_fb_base),
   .frameBufferCtrl_stride(FB_STRIDE),
   .frameBufferCtrl_vBlank(FB_VBL),
   .frameBufferCtrl_lowLat(FB_LL),
@@ -795,6 +802,47 @@ Cave cave (
   .led_disk(LED_DISK[0]),
   .led_user(LED_USER)
 );
+
+////////////////////////////////////////////////////////////////////////////////
+// ROTATED FRAME BUFFER CROP
+////////////////////////////////////////////////////////////////////////////////
+//
+// Rotated games are 320 lines tall in the frame buffer (240x320). When the
+// scaler's active output height (HDMI_HEIGHT, 0 in direct video) is smaller,
+// ascal would shrink 320 lines to fit with nearest-neighbour line drops, which
+// shimmer when the picture scrolls. Instead report only the middle
+// HDMI_HEIGHT lines: FB_HEIGHT = visible lines and FB_BASE moved down by the
+// top margin, so ascal reads them 1:1. The core still renders the whole frame
+// into each page; the offset is added to whichever page base the page flipper
+// presents, so triple/double buffering is unaffected. Horizontal games (not
+// rotated) and outputs >= 320 lines are unchanged. OSD "Rotated Height" =
+// Scale restores the old behaviour.
+
+reg  [11:0] fb_out_h_s0 = 12'd0, fb_out_h_s1 = 12'd0, fb_out_h_s2 = 12'd0;
+reg  [11:0] fb_out_h = 12'd0;
+reg  [11:0] fb_crop_h = 12'd0;
+reg  [11:0] fb_crop_lines = 12'd0;
+reg  [25:0] fb_crop_offset = 26'd0;
+reg  [31:0] fb_base_r = 32'd0;
+
+always @(posedge clk_sys) begin
+  // HDMI_HEIGHT comes from sys's clk_vid domain; it only changes on a video
+  // mode change, so take it once it has been stable for two samples.
+  fb_out_h_s0 <= HDMI_HEIGHT;
+  fb_out_h_s1 <= fb_out_h_s0;
+  fb_out_h_s2 <= fb_out_h_s1;
+  if (fb_out_h_s1 == fb_out_h_s2) fb_out_h <= fb_out_h_s2;
+
+  fb_crop <= ~status[74] & core_video_rotated &
+             (fb_out_h != 12'd0) & (fb_out_h < cave_fb_height);
+  fb_crop_h <= fb_out_h;
+  fb_crop_lines <= (cave_fb_height - fb_out_h) >> 1;
+  fb_crop_offset <= fb_crop_lines * FB_STRIDE;
+  fb_base_r <= cave_fb_base + (fb_crop ? {6'd0, fb_crop_offset} : 32'd0);
+end
+
+assign FB_HEIGHT = fb_crop ? fb_crop_h : cave_fb_height;
+assign FB_BASE   = fb_base_r;
 
 ////////////////////////////////////////////////////////////////////////////////
 // RETROACHIEVEMENTS RAM MIRROR
